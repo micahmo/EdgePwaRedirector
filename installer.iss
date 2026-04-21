@@ -1,5 +1,6 @@
 #define MyAppName "Edge PWA Redirector"
-#define MyAppVersion "1.0.0"
+#define _ExeVer GetVersionNumbersString("publish\EdgePwaRedirector.exe")
+#define MyAppVersion Copy(_ExeVer, 1, Len(_ExeVer) - 2)
 #define MyAppPublisher "micahmo"
 #define MyAppExeName "EdgePwaRedirector.exe"
 

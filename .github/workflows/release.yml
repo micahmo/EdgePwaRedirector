@@ -33,9 +33,7 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: Build installer
-        run: |
-          $ver = "${{ steps.version.outputs.version }}"
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$ver" installer.iss
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
         shell: pwsh
 
       - name: Create GitHub release
