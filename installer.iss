@@ -32,7 +32,6 @@ Source: "publish\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\System.Management.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\EdgePwaRedirector.deps.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\EdgePwaRedirector.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\runtimes\*"; DestDir: "{app}\runtimes"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
