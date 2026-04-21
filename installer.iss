@@ -46,19 +46,24 @@ var
   ResultCode, I: Integer;
   ExePath, Log: String;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Log := 'taskkill exit code: ' + IntToStr(ResultCode) + #13#10;
+  // PowerShell Stop-Process handles cross-session kills better than taskkill
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+       '-NonInteractive -WindowStyle Hidden -Command ' +
+       '"Stop-Process -Name ''EdgePwaRedirector'' -Force -ErrorAction SilentlyContinue"',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log := 'Stop-Process exit code: ' + IntToStr(ResultCode) + #13#10;
 
   ExePath := ExpandConstant('{app}\{#MyAppExeName}');
-  Log := Log + 'watching: ' + ExePath + #13#10;
 
+  // RenameFile succeeds even on running exes (FILE_SHARE_DELETE) so it's not a
+  // reliable write-lock probe. Instead try overwriting with a dummy copy.
   for I := 1 to 50 do
   begin
     Sleep(200);
-    if RenameFile(ExePath, ExePath + '.old') then
+    if FileCopy(ExePath, ExePath + '.probe', False) then
     begin
-      RenameFile(ExePath + '.old', ExePath);
-      Log := Log + 'file free after ' + IntToStr(I) + ' attempt(s)' + #13#10;
+      DeleteFile(ExePath + '.probe');
+      Log := Log + 'file writable after ' + IntToStr(I) + ' attempt(s)' + #13#10;
       break;
     end;
     if I = 50 then
