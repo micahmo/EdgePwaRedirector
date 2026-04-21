@@ -157,6 +157,8 @@ class RedirectService
     private const int GW_OWNER = 4;
     private const int OBJID_WINDOW = 0;
     private const uint WM_CLOSE = 0x0010;
+    private const uint WM_KEYDOWN = 0x0100;
+    private const uint WM_KEYUP = 0x0101;
 
     // Known Edge PWA app IDs and window title fragments.
     // Add new entries here when supporting additional PWAs.
