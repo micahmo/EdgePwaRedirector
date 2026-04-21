@@ -28,11 +28,7 @@ Name: "startup"; Description: "Start automatically when Windows starts"; GroupDe
 
 [Files]
 Source: "publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\EdgePwaRedirector.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\app.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\System.Management.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\EdgePwaRedirector.deps.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\EdgePwaRedirector.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
