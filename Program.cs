@@ -22,64 +22,42 @@ static class Program
     {
         try
         {
-            StartupLog.Path = System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log");
-            void Log(string msg) => StartupLog.Write(msg);
-
             var self = Process.GetCurrentProcess();
-            Log($"Start pid={self.Id} user={Environment.UserName} interactive={Environment.UserInteractive} session={self.SessionId}");
 
-            StartupLog.IsProcessInJob(self.Handle, IntPtr.Zero, out bool inJob);
-            var wsSb = new StringBuilder(256); int wsLen;
-            StartupLog.GetUserObjectInformation(StartupLog.GetProcessWindowStation(), 2, wsSb, 256, out wsLen);
-            var deskSb = new StringBuilder(256); int deskLen;
-            StartupLog.GetUserObjectInformation(StartupLog.GetThreadDesktop(StartupLog.GetCurrentThreadId()), 2, deskSb, 256, out deskLen);
+            // If not launched through Explorer's shell chain, Shell_NotifyIcon silently
+            // fails to register the tray icon. Relaunch via Task Scheduler (/it /rl LIMITED),
+            // which creates a proper interactive session process regardless of calling context.
             bool launchedFromExplorer = false;
             try
             {
-                var parent = Process.GetProcessById((int)StartupLog.GetParentProcessId(self.Handle));
-                Log($"Parent={parent.ProcessName}({parent.Id})");
+                var parent = Process.GetProcessById((int)GetParentProcessId(self.Handle));
                 launchedFromExplorer = parent.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase);
             }
-            catch { Log("Parent=unknown"); }
+            catch { }
 
-            uint uiRestrict = 0;
-            bool uiOk = StartupLog.QueryInformationJobObject(IntPtr.Zero, 4, ref uiRestrict, 4, out _);
-            bool isElevated = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-            Log($"InJob={inJob} IsElevated={isElevated} WindowStation={wsSb} Desktop={deskSb} JobUIRestrictions={(uiOk ? $"0x{uiRestrict:X}" : $"err={Marshal.GetLastWin32Error()}")}");
-
-            // If not launched through Explorer's shell chain, Shell_NotifyIcon silently fails
-            // on this machine. Relaunch via Task Scheduler, which creates a proper interactive
-            // session process regardless of the calling context.
             bool isRelaunch = Environment.GetCommandLineArgs().Skip(1).Contains("--relaunch");
             if (!launchedFromExplorer && !isRelaunch)
             {
-                Log("Not launched from Explorer; relaunching via Task Scheduler");
-                try
-                {
-                    var exePath = self.MainModule!.FileName;
-                    var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
-                    const string taskName = "EdgePwaRedirectorLaunch";
-                    RunHidden("schtasks.exe", $"/create /tn \"{taskName}\" /tr \"\\\"{exePath}\\\" --relaunch\" /sc once /st 00:00 /f /ru \"{user}\" /it /rl LIMITED");
-                    RunHidden("schtasks.exe", $"/run /tn \"{taskName}\"");
-                    Thread.Sleep(2000);
-                    RunHidden("schtasks.exe", $"/delete /tn \"{taskName}\" /f");
-                }
-                catch (Exception ex) { Log($"Task scheduler relaunch failed: {ex.Message}"); }
+                var exePath = self.MainModule!.FileName;
+                var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
+                const string taskName = "EdgePwaRedirectorLaunch";
+                RunHidden("schtasks.exe", $"/create /tn \"{taskName}\" /tr \"\\\"{exePath}\\\" --relaunch\" /sc once /st 00:00 /f /ru \"{user}\" /it /rl LIMITED");
+                RunHidden("schtasks.exe", $"/run /tn \"{taskName}\"");
+                Thread.Sleep(2000);
+                RunHidden("schtasks.exe", $"/delete /tn \"{taskName}\" /f");
                 return;
             }
 
+            // Kill any previous instance — same user always has permission, and this lets
+            // the installer hand off cleanly without needing to kill from an elevated context.
             bool killedAny = false;
             foreach (var other in Process.GetProcessesByName(self.ProcessName))
             {
                 if (other.Id != self.Id)
-                {
-                    Log($"Killing pid={other.Id} user={other.SessionId}");
                     try { other.Kill(); other.WaitForExit(3000); killedAny = true; } catch { }
-                }
             }
             if (killedAny) Thread.Sleep(1000);
 
-            Log("Starting TrayApp");
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new TrayApp());
@@ -91,26 +69,24 @@ static class Program
             MessageBox.Show(ex.ToString(), "EdgePwaRedirector crashed");
         }
     }
-}
 
-static class StartupLog
-{
-    public static string? Path { get; set; }
-    public static void Write(string msg)
+    [DllImport("ntdll.dll")]
+    static extern int NtQueryInformationProcess(IntPtr hProcess, int processInformationClass, ref PROCESS_BASIC_INFORMATION pbi, int size, out int returnLength);
+
+    static uint GetParentProcessId(IntPtr hProcess)
     {
-        if (Path != null)
-            System.IO.File.AppendAllText(Path, $"[{DateTime.Now:O}] {msg}\n");
+        var pbi = new PROCESS_BASIC_INFORMATION();
+        NtQueryInformationProcess(hProcess, 0, ref pbi, Marshal.SizeOf(pbi), out _);
+        return (uint)pbi.InheritedFromUniqueProcessId;
     }
 
-    [DllImport("kernel32.dll")] internal static extern bool IsProcessInJob(IntPtr hProcess, IntPtr hJob, out bool result);
-    [DllImport("user32.dll")] internal static extern IntPtr GetProcessWindowStation();
-    [DllImport("user32.dll")] internal static extern IntPtr GetThreadDesktop(uint dwThreadId);
-    [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
-    [DllImport("user32.dll", CharSet = CharSet.Auto)] internal static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
-    [DllImport("ntdll.dll")] internal static extern int NtQueryInformationProcess(IntPtr hProcess, int processInformationClass, ref PROCESS_BASIC_INFORMATION pbi, int size, out int returnLength);
-    [DllImport("kernel32.dll", SetLastError = true)] internal static extern bool QueryInformationJobObject(IntPtr hJob, int jobObjectClass, ref uint info, int cbInfo, out int returnLength);
-    internal static uint GetParentProcessId(IntPtr hProcess) { var pbi = new PROCESS_BASIC_INFORMATION(); NtQueryInformationProcess(hProcess, 0, ref pbi, Marshal.SizeOf(pbi), out _); return (uint)pbi.InheritedFromUniqueProcessId; }
-    [StructLayout(LayoutKind.Sequential)] internal struct PROCESS_BASIC_INFORMATION { public IntPtr Reserved1; public IntPtr PebBaseAddress; public IntPtr Reserved2_0; public IntPtr Reserved2_1; public IntPtr UniqueProcessId; public IntPtr InheritedFromUniqueProcessId; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_BASIC_INFORMATION
+    {
+        public IntPtr Reserved1; public IntPtr PebBaseAddress;
+        public IntPtr Reserved2_0; public IntPtr Reserved2_1;
+        public IntPtr UniqueProcessId; public IntPtr InheritedFromUniqueProcessId;
+    }
 }
 
 class TrayApp : ApplicationContext
@@ -121,35 +97,18 @@ class TrayApp : ApplicationContext
 
     public TrayApp()
     {
-        StartupLog.Write("TrayApp constructor start");
         _service = new RedirectService();
 
         _trayIcon = new NotifyIcon
         {
             Icon = CreateTrayIcon(),
             Text = "Edge PWA Redirector",
+            Visible = true,
             ContextMenuStrip = BuildContextMenu()
         };
 
-        StartupLog.Write("Setting icon visible");
-        _trayIcon.Visible = true;
-        StartupLog.Write("Icon visible set");
-
         _messageWindow = new TrayMessageWindow(_trayIcon);
         _service.Start();
-
-        var reregisterTimer = new System.Windows.Forms.Timer { Interval = 2000 };
-        reregisterTimer.Tick += (_, _) =>
-        {
-            StartupLog.Write("Timer fired, re-registering icon");
-            reregisterTimer.Stop();
-            reregisterTimer.Dispose();
-            _trayIcon.Visible = false;
-            _trayIcon.Visible = true;
-            StartupLog.Write("Timer re-registration done");
-        };
-        reregisterTimer.Start();
-        StartupLog.Write("TrayApp constructor done");
     }
 
     private static Icon CreateTrayIcon()
