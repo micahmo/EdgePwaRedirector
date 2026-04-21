@@ -40,9 +40,6 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{app}\{#MyAppExeName}"""; Flags: uninsdeletevalue; Tasks: startup
 
-[Run]
-Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
-
 [Code]
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
@@ -55,4 +52,20 @@ begin
   DeleteFile(ExePath + '.bak');
   RenameFile(ExePath, ExePath + '.bak');
   Result := '';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ShellApp: Variant;
+  ExePath: String;
+begin
+  if CurStep <> ssDone then Exit;
+  // Use Shell.Application.ShellExecute so the app launches in the interactive
+  // user's window station rather than the elevated installer's context.
+  ExePath := ExpandConstant('{app}\{#MyAppExeName}');
+  try
+    ShellApp := CreateOleObject('Shell.Application');
+    ShellApp.ShellExecute(ExePath, '', ExpandConstant('{app}'), 'open', 1);
+  except
+  end;
 end;
