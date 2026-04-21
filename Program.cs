@@ -34,6 +34,7 @@ class TrayApp : ApplicationContext
 {
     private readonly NotifyIcon _trayIcon;
     private readonly RedirectService _service;
+    private readonly TrayMessageWindow _messageWindow;
 
     public TrayApp()
     {
@@ -47,6 +48,7 @@ class TrayApp : ApplicationContext
             ContextMenuStrip = BuildContextMenu()
         };
 
+        _messageWindow = new TrayMessageWindow(_trayIcon);
         _service.Start();
     }
 
@@ -108,11 +110,37 @@ class TrayApp : ApplicationContext
     {
         if (disposing)
         {
+            _messageWindow.ReleaseHandle();
             _trayIcon.Dispose();
             _service.Stop();
         }
         base.Dispose(disposing);
     }
+}
+
+class TrayMessageWindow : NativeWindow
+{
+    private static readonly uint WM_TASKBARCREATED = RegisterWindowMessage("TaskbarCreated");
+    private readonly NotifyIcon _trayIcon;
+
+    public TrayMessageWindow(NotifyIcon trayIcon)
+    {
+        _trayIcon = trayIcon;
+        CreateHandle(new CreateParams());
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_TASKBARCREATED)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Visible = true;
+        }
+        base.WndProc(ref m);
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern uint RegisterWindowMessage(string lpString);
 }
 
 class RedirectService
