@@ -316,16 +316,14 @@ class RedirectService
 
     private static bool IsSpawnedByKnownPwa(IntPtr hwnd)
     {
-        // Primary: check if the native owner window belongs to a known PWA
         var owner = GetWindow(hwnd, GW_OWNER);
-        if (owner != IntPtr.Zero && IsKnownPwaWindow(owner))
-            return true;
-
-        // Fallback: check if a known PWA process is running and this isn't the PWA itself
-        if (!IsKnownPwaWindow(hwnd) && IsKnownPwaProcessRunning())
-            return true;
-
-        return false;
+        var ownerTitle = new StringBuilder(512); GetWindowText(owner, ownerTitle, 512);
+        var hwndTitle = new StringBuilder(512); GetWindowText(hwnd, hwndTitle, 512);
+        bool ownerMatch = owner != IntPtr.Zero && IsKnownPwaWindow(owner);
+        bool selfIsPwa = IsKnownPwaWindow(hwnd);
+        bool pwaRunning = !selfIsPwa && IsKnownPwaProcessRunning();
+        Log($"IsSpawnedByKnownPwa hwnd={hwnd} title='{hwndTitle}' owner={owner} ownerTitle='{ownerTitle}' ownerMatch={ownerMatch} selfIsPwa={selfIsPwa} pwaRunning={pwaRunning} result={ownerMatch || pwaRunning}");
+        return ownerMatch || pwaRunning;
     }
 
     private static bool IsKnownPwaWindow(IntPtr hwnd)
@@ -377,6 +375,11 @@ class RedirectService
         return false;
     }
 
+    private static void Log(string msg) =>
+        System.IO.File.AppendAllText(
+            System.IO.Path.Combine(AppContext.BaseDirectory, "redirect.log"),
+            $"[{DateTime.Now:O}] {msg}\n");
+
     private static void RedirectToDefaultBrowser(IntPtr hwnd)
     {
         string? url = null;
@@ -384,8 +387,9 @@ class RedirectService
         for (int i = 0; i < 20; i++)
         {
             Thread.Sleep(300);
-            if (!IsWindow(hwnd)) return;
+            if (!IsWindow(hwnd)) { Log($"hwnd={hwnd} gone at poll[{i}]"); return; }
             var candidate = ReadAddressBarUrl(hwnd);
+            Log($"hwnd={hwnd} poll[{i}] url='{candidate}'");
             if (!string.IsNullOrEmpty(candidate) && !IsTransientUrl(candidate))
             {
                 url = candidate;
@@ -393,20 +397,19 @@ class RedirectService
             }
         }
 
-        if (!IsWindow(hwnd)) return;
+        if (!IsWindow(hwnd)) { Log($"hwnd={hwnd} gone after poll"); return; }
 
-        // Auth popups (sign-in flows) must stay open for the user to interact with.
-        if (url != null && IsAuthUrl(url)) return;
+        Log($"hwnd={hwnd} final url='{url}' isAuth={url != null && IsAuthUrl(url)} isOwned={url != null && IsOwnedUrl(url)}");
 
-        // External URL — open in Firefox then close the Edge window.
+        if (url != null && IsAuthUrl(url)) { Log("returning: auth url"); return; }
+
         if (!string.IsNullOrEmpty(url) && !IsOwnedUrl(url))
         {
             var firefox = FindFirefox();
+            Log($"opening in firefox: {url}");
             Process.Start(new ProcessStartInfo(firefox, url) { UseShellExecute = false });
         }
 
-        // Navigate to about:blank before closing so Edge's session restore doesn't
-        // save and re-open the redirect URL on the next link click.
         NavigateToBlank(hwnd);
         Thread.Sleep(300);
 
