@@ -17,19 +17,24 @@ static class Program
     {
         try
         {
-            // Kill any previous instance — same user always has permission,
-            // and this lets the installer hand off cleanly without needing to
-            // kill the process itself from an elevated/different-user context.
+            var logPath = System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log");
+            void Log(string msg) => System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] {msg}\n");
+
             var self = Process.GetCurrentProcess();
+            Log($"Start pid={self.Id} user={Environment.UserName} interactive={Environment.UserInteractive} session={self.SessionId}");
             bool killedAny = false;
             foreach (var other in Process.GetProcessesByName(self.ProcessName))
             {
                 if (other.Id != self.Id)
+                {
+                    Log($"Killing pid={other.Id} user={other.SessionId}");
                     try { other.Kill(); other.WaitForExit(3000); killedAny = true; } catch { }
+                }
             }
             // Give the shell time to remove the old tray icon before we register a new one.
             if (killedAny) Thread.Sleep(1000);
 
+            Log("Starting TrayApp");
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new TrayApp());
