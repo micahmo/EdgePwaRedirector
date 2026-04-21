@@ -31,7 +31,8 @@ static class Program
             try { var parent = Process.GetProcessById((int)StartupLog.GetParentProcessId(self.Handle)); Log($"Parent={parent.ProcessName}({parent.Id})"); } catch { Log("Parent=unknown"); }
             uint uiRestrict = 0;
             bool uiOk = StartupLog.QueryInformationJobObject(IntPtr.Zero, 4, ref uiRestrict, 4, out _);
-            Log($"InJob={inJob} WindowStation={wsSb} Desktop={deskSb} JobUIRestrictions={(uiOk ? $"0x{uiRestrict:X}" : $"err={Marshal.GetLastWin32Error()}")}");
+            bool isElevated = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            Log($"InJob={inJob} IsElevated={isElevated} WindowStation={wsSb} Desktop={deskSb} JobUIRestrictions={(uiOk ? $"0x{uiRestrict:X}" : $"err={Marshal.GetLastWin32Error()}")}");
             bool killedAny = false;
             foreach (var other in Process.GetProcessesByName(self.ProcessName))
             {
