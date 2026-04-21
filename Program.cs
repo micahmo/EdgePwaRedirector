@@ -428,15 +428,23 @@ class RedirectService
             Process.Start(new ProcessStartInfo(firefox, url) { UseShellExecute = false });
         }
 
-        NavigateToBlank(hwnd);
+        GetWindowThreadProcessId(hwnd, out uint closePid);
+        Log($"hwnd={hwnd} pid={closePid} parent={GetParent(hwnd)} navigating to blank");
+        NavigateToBlank(hwnd, out bool navOk);
+        Log($"hwnd={hwnd} navOk={navOk} isWindow={IsWindow(hwnd)}");
         Thread.Sleep(300);
 
-        if (IsWindow(hwnd))
+        bool stillThere = IsWindow(hwnd);
+        Log($"hwnd={hwnd} stillThere={stillThere} sending WM_CLOSE");
+        if (stillThere)
             PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        Thread.Sleep(500);
+        Log($"hwnd={hwnd} afterClose isWindow={IsWindow(hwnd)}");
     }
 
-    private static void NavigateToBlank(IntPtr hwnd)
+    private static void NavigateToBlank(IntPtr hwnd, out bool ok)
     {
+        ok = false;
         try
         {
             var root = AutomationElement.FromHandle(hwnd);
@@ -453,10 +461,11 @@ class RedirectService
                 {
                     PostMessage(barHwnd, WM_KEYDOWN, (IntPtr)0x0D, IntPtr.Zero);
                     PostMessage(barHwnd, WM_KEYUP, (IntPtr)0x0D, IntPtr.Zero);
+                    ok = true;
                 }
             }
         }
-        catch { }
+        catch (Exception ex) { Log($"NavigateToBlank ex: {ex.GetType().Name}: {ex.Message}"); }
     }
 
     private static string FindFirefox()
@@ -505,6 +514,7 @@ class RedirectService
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hWnd);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MSG
