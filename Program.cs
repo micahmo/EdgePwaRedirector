@@ -143,7 +143,7 @@ class RedirectService
         "Outlook",
     ];
 
-    // URLs belonging to the PWAs themselves — don't redirect these.
+    // URLs belonging to the PWAs' core UI — close the window without redirecting.
     private static readonly string[] OwnedUrlPatterns = [
         "teams.microsoft.com",
         "outlook.office.com",
@@ -151,6 +151,10 @@ class RedirectService
         "outlook.live.com",
         "webmail.jci.com",
         "webmail.o365.jci.com",
+    ];
+
+    // Auth/login flows that need to stay visible for the user to interact with.
+    private static readonly string[] AuthUrlPatterns = [
         "microsoftonline.com",
         "microsoft.com/devicelogin",
     ];
@@ -277,6 +281,13 @@ class RedirectService
         return false;
     }
 
+    private static bool IsAuthUrl(string url)
+    {
+        foreach (var pattern in AuthUrlPatterns)
+            if (url.Contains(pattern)) return true;
+        return false;
+    }
+
     private static void RedirectToDefaultBrowser(IntPtr hwnd)
     {
         string? url = null;
@@ -293,13 +304,21 @@ class RedirectService
             }
         }
 
-        if (string.IsNullOrEmpty(url) || IsOwnedUrl(url)) return;
+        if (!IsWindow(hwnd)) return;
 
-        var firefox = FindFirefox();
-        Process.Start(new ProcessStartInfo(firefox, url) { UseShellExecute = false });
+        // Auth popups (sign-in flows) must stay open for the user to interact with.
+        if (url != null && IsAuthUrl(url)) return;
 
-        if (IsWindow(hwnd))
-            PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        // External URL — open in Firefox then close the Edge window.
+        if (!string.IsNullOrEmpty(url) && !IsOwnedUrl(url))
+        {
+            var firefox = FindFirefox();
+            Process.Start(new ProcessStartInfo(firefox, url) { UseShellExecute = false });
+        }
+
+        // Close in all other cases: owned PWA URL or URL never resolved.
+        // The PWA handles its own navigation; stray windows should not accumulate.
+        PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
     }
 
     private static string FindFirefox()
