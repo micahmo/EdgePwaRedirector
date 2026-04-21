@@ -13,6 +13,10 @@ namespace EdgePwaRedirector;
 
 static class Program
 {
+    static void RunHidden(string exe, string args) =>
+        Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = false, CreateNoWindow = true })
+               ?.WaitForExit(10000);
+
     [STAThread]
     static void Main()
     {
@@ -43,19 +47,25 @@ static class Program
             bool isElevated = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
             Log($"InJob={inJob} IsElevated={isElevated} WindowStation={wsSb} Desktop={deskSb} JobUIRestrictions={(uiOk ? $"0x{uiRestrict:X}" : $"err={Marshal.GetLastWin32Error()}")}");
 
-            // If not launched through Explorer's shell chain, the notification area silently
-            // rejects Shell_NotifyIcon on this machine. Relaunch via ShellExecute (which goes
-            // through Explorer) and exit — the new instance will show the tray icon correctly.
+            // If not launched through Explorer's shell chain, Shell_NotifyIcon silently fails
+            // on this machine. Relaunch via Task Scheduler, which creates a proper interactive
+            // session process regardless of the calling context.
             bool isRelaunch = Environment.GetCommandLineArgs().Skip(1).Contains("--relaunch");
             if (!launchedFromExplorer && !isRelaunch)
             {
-                Log("Not launched from Explorer; relaunching via ShellExecute");
-                Process.Start(new ProcessStartInfo(self.MainModule!.FileName)
+                Log("Not launched from Explorer; relaunching via Task Scheduler");
+                try
                 {
-                    Arguments = "--relaunch",
-                    UseShellExecute = true
-                });
-                return; // The relaunched instance handles old-instance killing
+                    var exePath = self.MainModule!.FileName;
+                    var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
+                    const string taskName = "EdgePwaRedirectorLaunch";
+                    RunHidden("schtasks.exe", $"/create /tn \"{taskName}\" /tr \"\\\"{exePath}\\\" --relaunch\" /sc once /st 00:00 /f /ru \"{user}\" /it /rl LIMITED");
+                    RunHidden("schtasks.exe", $"/run /tn \"{taskName}\"");
+                    Thread.Sleep(2000);
+                    RunHidden("schtasks.exe", $"/delete /tn \"{taskName}\" /f");
+                }
+                catch (Exception ex) { Log($"Task scheduler relaunch failed: {ex.Message}"); }
+                return;
             }
 
             bool killedAny = false;
