@@ -29,7 +29,9 @@ static class Program
             var deskSb = new StringBuilder(256); int deskLen;
             StartupLog.GetUserObjectInformation(StartupLog.GetThreadDesktop(StartupLog.GetCurrentThreadId()), 2, deskSb, 256, out deskLen);
             try { var parent = Process.GetProcessById((int)StartupLog.GetParentProcessId(self.Handle)); Log($"Parent={parent.ProcessName}({parent.Id})"); } catch { Log("Parent=unknown"); }
-            Log($"InJob={inJob} WindowStation={wsSb} Desktop={deskSb}");
+            uint uiRestrict = 0;
+            bool uiOk = StartupLog.QueryInformationJobObject(IntPtr.Zero, 4, ref uiRestrict, 4, out _);
+            Log($"InJob={inJob} WindowStation={wsSb} Desktop={deskSb} JobUIRestrictions={(uiOk ? $"0x{uiRestrict:X}" : $"err={Marshal.GetLastWin32Error()}")}");
             bool killedAny = false;
             foreach (var other in Process.GetProcessesByName(self.ProcessName))
             {
@@ -71,6 +73,7 @@ static class StartupLog
     [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
     [DllImport("user32.dll", CharSet = CharSet.Auto)] internal static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
     [DllImport("ntdll.dll")] internal static extern int NtQueryInformationProcess(IntPtr hProcess, int processInformationClass, ref PROCESS_BASIC_INFORMATION pbi, int size, out int returnLength);
+    [DllImport("kernel32.dll", SetLastError = true)] internal static extern bool QueryInformationJobObject(IntPtr hJob, int jobObjectClass, ref uint info, int cbInfo, out int returnLength);
     internal static uint GetParentProcessId(IntPtr hProcess) { var pbi = new PROCESS_BASIC_INFORMATION(); NtQueryInformationProcess(hProcess, 0, ref pbi, Marshal.SizeOf(pbi), out _); return (uint)pbi.InheritedFromUniqueProcessId; }
     [StructLayout(LayoutKind.Sequential)] internal struct PROCESS_BASIC_INFORMATION { public IntPtr Reserved1; public IntPtr PebBaseAddress; public IntPtr Reserved2_0; public IntPtr Reserved2_1; public IntPtr UniqueProcessId; public IntPtr InheritedFromUniqueProcessId; }
 }
