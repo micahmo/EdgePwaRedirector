@@ -89,7 +89,12 @@ class TrayApp : ApplicationContext
 
     private ContextMenuStrip BuildContextMenu()
     {
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var versionLabel = new ToolStripMenuItem($"v{version?.ToString(3) ?? "?"}") { Enabled = false };
+
         var menu = new ContextMenuStrip();
+        menu.Items.Add(versionLabel);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) =>
         {
             _service.Stop();

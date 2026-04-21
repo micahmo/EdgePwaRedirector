@@ -23,7 +23,7 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Publish
-        run: dotnet publish EdgePwaRedirector.csproj -c Release -r win-x64 --self-contained false -o publish
+        run: dotnet publish EdgePwaRedirector.csproj -c Release -r win-x64 --self-contained false -o publish -p:Version=${{ steps.version.outputs.version }}
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
