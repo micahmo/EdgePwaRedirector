@@ -60,8 +60,10 @@ var
   ExePath: String;
 begin
   if CurStep <> ssDone then Exit;
-  // Use Shell.Application.ShellExecute so the app launches in the interactive
-  // user's window station rather than the elevated installer's context.
+  // Launch the app after install. On domain machines where the installer runs
+  // as a different elevated account, the app detects it wasn't launched from
+  // Explorer and automatically relaunches itself via Task Scheduler to get a
+  // proper interactive session context for the notification area.
   ExePath := ExpandConstant('{app}\{#MyAppExeName}');
   try
     ShellApp := CreateOleObject('Shell.Application');
