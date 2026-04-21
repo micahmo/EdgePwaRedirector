@@ -2,8 +2,8 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - master
 
 jobs:
   build:
@@ -11,6 +11,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: echo "version=1.0.${{ github.run_number }}" >> $env:GITHUB_OUTPUT
+        shell: pwsh
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -24,11 +29,13 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: Build installer
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="${{ steps.version.outputs.version }}" installer.iss'
         shell: pwsh
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
           files: installer_output/TeamsLinkRedirector-Setup.exe
           generate_release_notes: true
