@@ -344,9 +344,37 @@ class RedirectService
             Process.Start(new ProcessStartInfo(firefox, url) { UseShellExecute = false });
         }
 
-        // Close in all other cases: owned PWA URL or URL never resolved.
-        // The PWA handles its own navigation; stray windows should not accumulate.
-        PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        // Navigate to about:blank before closing so Edge's session restore doesn't
+        // save and re-open the redirect URL on the next link click.
+        NavigateToBlank(hwnd);
+        Thread.Sleep(300);
+
+        if (IsWindow(hwnd))
+            PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private static void NavigateToBlank(IntPtr hwnd)
+    {
+        try
+        {
+            var root = AutomationElement.FromHandle(hwnd);
+            var condition = new AndCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
+                new PropertyCondition(AutomationElement.NameProperty, "Address and search bar")
+            );
+            var bar = root.FindFirst(TreeScope.Descendants, condition);
+            if (bar?.GetCurrentPattern(ValuePattern.Pattern) is ValuePattern vp)
+            {
+                vp.SetValue("about:blank");
+                var barHwnd = new IntPtr(bar.Current.NativeWindowHandle);
+                if (barHwnd != IntPtr.Zero)
+                {
+                    PostMessage(barHwnd, WM_KEYDOWN, (IntPtr)0x0D, IntPtr.Zero);
+                    PostMessage(barHwnd, WM_KEYUP, (IntPtr)0x0D, IntPtr.Zero);
+                }
+            }
+        }
+        catch { }
     }
 
     private static string FindFirefox()
