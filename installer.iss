@@ -44,22 +44,27 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode, I: Integer;
-  ExePath: String;
+  ExePath, Log: String;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log := 'taskkill exit code: ' + IntToStr(ResultCode) + #13#10;
 
-  // Single-file .NET apps memory-map the exe; handles release asynchronously after
-  // TerminateProcess. Poll until we can rename the file (proves it's unlocked).
   ExePath := ExpandConstant('{app}\{#MyAppExeName}');
+  Log := Log + 'watching: ' + ExePath + #13#10;
+
   for I := 1 to 50 do
   begin
     Sleep(200);
     if RenameFile(ExePath, ExePath + '.old') then
     begin
       RenameFile(ExePath + '.old', ExePath);
+      Log := Log + 'file free after ' + IntToStr(I) + ' attempt(s)' + #13#10;
       break;
     end;
+    if I = 50 then
+      Log := Log + 'file still locked after 50 attempts' + #13#10;
   end;
 
+  SaveStringToFile(ExpandConstant('{app}\install_diag.txt'), Log, False);
   Result := '';
 end;
