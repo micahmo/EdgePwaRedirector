@@ -129,7 +129,7 @@ class RedirectService
     // Add new entries here when supporting additional PWAs.
     private static readonly string[] KnownPwaAppIds = [
         "cifhbcnohmdccbgoicgdjpfamggdegmo", // Microsoft Teams
-        // Outlook app ID goes here when needed
+        "faolnafnngnfdaknnbpnkhgohbobgegn", // Outlook (PWA)
     ];
 
     private static readonly string[] KnownPwaTitleFragments = [
@@ -144,6 +144,8 @@ class RedirectService
         "outlook.office.com",
         "outlook.office365.com",
         "outlook.live.com",
+        "webmail.jci.com",
+        "webmail.o365.jci.com",
         "microsoftonline.com",
         "microsoft.com/devicelogin",
     ];
