@@ -21,11 +21,14 @@ static class Program
             // and this lets the installer hand off cleanly without needing to
             // kill the process itself from an elevated/different-user context.
             var self = Process.GetCurrentProcess();
+            bool killedAny = false;
             foreach (var other in Process.GetProcessesByName(self.ProcessName))
             {
                 if (other.Id != self.Id)
-                    try { other.Kill(); other.WaitForExit(3000); } catch { }
+                    try { other.Kill(); other.WaitForExit(3000); killedAny = true; } catch { }
             }
+            // Give the shell time to remove the old tray icon before we register a new one.
+            if (killedAny) Thread.Sleep(1000);
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -60,6 +63,18 @@ class TrayApp : ApplicationContext
 
         _messageWindow = new TrayMessageWindow(_trayIcon);
         _service.Start();
+
+        // Re-register the tray icon after a short delay — the shell sometimes drops
+        // the registration when a previous instance was just killed.
+        var reregisterTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+        reregisterTimer.Tick += (_, _) =>
+        {
+            reregisterTimer.Stop();
+            reregisterTimer.Dispose();
+            _trayIcon.Visible = false;
+            _trayIcon.Visible = true;
+        };
+        reregisterTimer.Start();
     }
 
     private static Icon CreateTrayIcon()
