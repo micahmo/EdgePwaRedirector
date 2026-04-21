@@ -17,8 +17,8 @@ static class Program
     {
         try
         {
-            var logPath = System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log");
-            void Log(string msg) => System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] {msg}\n");
+            StartupLog.Path = System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log");
+            void Log(string msg) => StartupLog.Write(msg);
 
             var self = Process.GetCurrentProcess();
             Log($"Start pid={self.Id} user={Environment.UserName} interactive={Environment.UserInteractive} session={self.SessionId}");
@@ -48,6 +48,16 @@ static class Program
     }
 }
 
+static class StartupLog
+{
+    public static string? Path { get; set; }
+    public static void Write(string msg)
+    {
+        if (Path != null)
+            System.IO.File.AppendAllText(Path, $"[{DateTime.Now:O}] {msg}\n");
+    }
+}
+
 class TrayApp : ApplicationContext
 {
     private readonly NotifyIcon _trayIcon;
@@ -56,30 +66,35 @@ class TrayApp : ApplicationContext
 
     public TrayApp()
     {
+        StartupLog.Write("TrayApp constructor start");
         _service = new RedirectService();
 
         _trayIcon = new NotifyIcon
         {
             Icon = CreateTrayIcon(),
             Text = "Edge PWA Redirector",
-            Visible = true,
             ContextMenuStrip = BuildContextMenu()
         };
+
+        StartupLog.Write("Setting icon visible");
+        _trayIcon.Visible = true;
+        StartupLog.Write("Icon visible set");
 
         _messageWindow = new TrayMessageWindow(_trayIcon);
         _service.Start();
 
-        // Re-register the tray icon after a short delay — the shell sometimes drops
-        // the registration when a previous instance was just killed.
         var reregisterTimer = new System.Windows.Forms.Timer { Interval = 2000 };
         reregisterTimer.Tick += (_, _) =>
         {
+            StartupLog.Write("Timer fired, re-registering icon");
             reregisterTimer.Stop();
             reregisterTimer.Dispose();
             _trayIcon.Visible = false;
             _trayIcon.Visible = true;
+            StartupLog.Write("Timer re-registration done");
         };
         reregisterTimer.Start();
+        StartupLog.Write("TrayApp constructor done");
     }
 
     private static Icon CreateTrayIcon()
