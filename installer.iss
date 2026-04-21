@@ -1,18 +1,18 @@
-#define MyAppName "Teams Link Redirector"
+#define MyAppName "Edge PWA Redirector"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "micahmo"
-#define MyAppExeName "TeamsLinkRedirector.exe"
+#define MyAppExeName "EdgePwaRedirector.exe"
 
 [Setup]
 AppId={{A3F2B1C4-8D6E-4F3A-9B2C-1D5E7F8A0B3C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\TeamsLinkRedirector
+DefaultDirName={autopf}\EdgePwaRedirector
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=installer_output
-OutputBaseFilename=TeamsLinkRedirector-Setup
+OutputBaseFilename=EdgePwaRedirector-Setup
 SetupIconFile=app.ico
 Compression=lzma
 SolidCompression=yes
@@ -30,8 +30,8 @@ Name: "startup"; Description: "Start automatically when Windows starts"; GroupDe
 Source: "publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\System.Management.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\TeamsLinkRedirector.deps.json"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\TeamsLinkRedirector.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "publish\EdgePwaRedirector.deps.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "publish\EdgePwaRedirector.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\runtimes\*"; DestDir: "{app}\runtimes"; Flags: ignoreversion recursesubdirs
 
 [Icons]

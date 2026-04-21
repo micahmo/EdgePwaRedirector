@@ -8,7 +8,7 @@ using System.Threading;
 using System.Windows.Automation;
 using System.Windows.Forms;
 
-namespace TeamsLinkRedirector;
+namespace EdgePwaRedirector;
 
 static class Program
 {
@@ -25,7 +25,7 @@ static class Program
         {
             var log = System.IO.Path.Combine(AppContext.BaseDirectory, "crash.log");
             System.IO.File.WriteAllText(log, ex.ToString());
-            MessageBox.Show(ex.ToString(), "TeamsLinkRedirector crashed");
+            MessageBox.Show(ex.ToString(), "EdgePwaRedirector crashed");
         }
     }
 }
@@ -42,7 +42,7 @@ class TrayApp : ApplicationContext
         _trayIcon = new NotifyIcon
         {
             Icon = CreateTrayIcon(),
-            Text = "Teams Link Redirector",
+            Text = "Edge PWA Redirector",
             Visible = true,
             ContextMenuStrip = BuildContextMenu()
         };
@@ -63,7 +63,6 @@ class TrayApp : ApplicationContext
             g.DrawLine(pen, 16, 24, 26, 16);
         }
 
-        // Encode bitmap as PNG then wrap in an ICO stream
         using var pngMs = new System.IO.MemoryStream();
         bmp.Save(pngMs, System.Drawing.Imaging.ImageFormat.Png);
         bmp.Dispose();
@@ -71,17 +70,17 @@ class TrayApp : ApplicationContext
 
         using var icoMs = new System.IO.MemoryStream();
         using var w = new System.IO.BinaryWriter(icoMs);
-        w.Write((short)0);       // reserved
-        w.Write((short)1);       // type: icon
-        w.Write((short)1);       // image count
-        w.Write((byte)32);       // width
-        w.Write((byte)32);       // height
-        w.Write((byte)0);        // colour count
-        w.Write((byte)0);        // reserved
-        w.Write((short)1);       // planes
-        w.Write((short)32);      // bit depth
-        w.Write(png.Length);     // image data size
-        w.Write(6 + 16);         // image data offset
+        w.Write((short)0);
+        w.Write((short)1);
+        w.Write((short)1);
+        w.Write((byte)32);
+        w.Write((byte)32);
+        w.Write((byte)0);
+        w.Write((byte)0);
+        w.Write((short)1);
+        w.Write((short)32);
+        w.Write(png.Length);
+        w.Write(6 + 16);
         w.Write(png);
 
         icoMs.Position = 0;
@@ -126,12 +125,31 @@ class RedirectService
     private const int OBJID_WINDOW = 0;
     private const uint WM_CLOSE = 0x0010;
 
-    // Teams PWA app ID as installed in Edge Profile 1
-    private const string TeamsAppId = "cifhbcnohmdccbgoicgdjpfamggdegmo";
+    // Known Edge PWA app IDs and window title fragments.
+    // Add new entries here when supporting additional PWAs.
+    private static readonly string[] KnownPwaAppIds = [
+        "cifhbcnohmdccbgoicgdjpfamggdegmo", // Microsoft Teams
+        // Outlook app ID goes here when needed
+    ];
+
+    private static readonly string[] KnownPwaTitleFragments = [
+        "Microsoft Teams",
+        "Microsoft Outlook",
+        "Outlook",
+    ];
+
+    // URLs belonging to the PWAs themselves — don't redirect these.
+    private static readonly string[] OwnedUrlPatterns = [
+        "teams.microsoft.com",
+        "outlook.office.com",
+        "outlook.office365.com",
+        "outlook.live.com",
+        "microsoftonline.com",
+        "microsoft.com/devicelogin",
+    ];
 
     public void Start()
     {
-        // Snapshot existing Edge windows so we only act on new ones
         EnumWindows((hwnd, _) =>
         {
             if (IsEdgeWindow(hwnd))
@@ -180,14 +198,13 @@ class RedirectService
             return;
         }
 
-        // EVENT_OBJECT_SHOW — check if this is a new window
         bool isNew;
         lock (_lock) isNew = _knownWindows.Add(hwnd);
         if (!isNew) return;
 
-        if (!IsSpawnedByTeams(hwnd)) return;
+        if (!IsSpawnedByKnownPwa(hwnd)) return;
 
-        ThreadPool.QueueUserWorkItem(_ => RedirectToFirefox(hwnd));
+        ThreadPool.QueueUserWorkItem(_ => RedirectToDefaultBrowser(hwnd));
     }
 
     private static bool IsEdgeWindow(IntPtr hwnd)
@@ -197,43 +214,43 @@ class RedirectService
         return sb.ToString() == "Chrome_WidgetWin_1";
     }
 
-    private static bool IsSpawnedByTeams(IntPtr hwnd)
+    private static bool IsSpawnedByKnownPwa(IntPtr hwnd)
     {
-        // Primary: check if the native owner window is Teams
+        // Primary: check if the native owner window belongs to a known PWA
         var owner = GetWindow(hwnd, GW_OWNER);
-        if (owner != IntPtr.Zero && IsTeamsWindow(owner))
+        if (owner != IntPtr.Zero && IsKnownPwaWindow(owner))
             return true;
 
-        // Fallback: check if any Edge process is running the Teams PWA app
-        // and this window is NOT the Teams window itself
-        if (!IsTeamsWindow(hwnd) && IsTeamsPwaProcessRunning())
+        // Fallback: check if a known PWA process is running and this isn't the PWA itself
+        if (!IsKnownPwaWindow(hwnd) && IsKnownPwaProcessRunning())
             return true;
 
         return false;
     }
 
-    private static bool IsTeamsWindow(IntPtr hwnd)
+    private static bool IsKnownPwaWindow(IntPtr hwnd)
     {
         var sb = new StringBuilder(512);
         GetWindowText(hwnd, sb, 512);
         var title = sb.ToString();
-        return title.Contains("Microsoft Teams") || title.StartsWith("Teams");
+        foreach (var fragment in KnownPwaTitleFragments)
+            if (title.Contains(fragment)) return true;
+        return false;
     }
 
-    private static bool IsTeamsPwaProcessRunning()
+    private static bool IsKnownPwaProcessRunning()
     {
         foreach (var p in Process.GetProcessesByName("msedge"))
         {
             try
             {
-                // Check if any msedge process has the Teams app ID in its command line
                 using var searcher = new System.Management.ManagementObjectSearcher(
                     $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {p.Id}");
                 foreach (System.Management.ManagementObject obj in searcher.Get())
                 {
                     var cmd = obj["CommandLine"]?.ToString() ?? "";
-                    if (cmd.Contains(TeamsAppId) || cmd.Contains("teams.microsoft.com"))
-                        return true;
+                    foreach (var appId in KnownPwaAppIds)
+                        if (cmd.Contains(appId)) return true;
                 }
             }
             catch { }
@@ -243,14 +260,20 @@ class RedirectService
 
     private static bool IsTransientUrl(string url) =>
         url.StartsWith("about:") ||
-        url.Contains("safelinks") ||           // ATP Safe Links intermediate page
-        url.Contains("statics.teams.cdn");     // Teams CDN safelinks wrapper
+        url.Contains("safelinks") ||
+        url.Contains("statics.teams.cdn");
 
-    private static void RedirectToFirefox(IntPtr hwnd)
+    private static bool IsOwnedUrl(string url)
+    {
+        foreach (var pattern in OwnedUrlPatterns)
+            if (url.Contains(pattern)) return true;
+        return false;
+    }
+
+    private static void RedirectToDefaultBrowser(IntPtr hwnd)
     {
         string? url = null;
 
-        // Poll up to 6s, waiting past about:blank AND ATP safelinks redirects
         for (int i = 0; i < 20; i++)
         {
             Thread.Sleep(300);
@@ -263,19 +286,11 @@ class RedirectService
             }
         }
 
-        if (string.IsNullOrEmpty(url)) return;
+        if (string.IsNullOrEmpty(url) || IsOwnedUrl(url)) return;
 
-        // Don't redirect Teams itself or auth flows
-        if (url.Contains("teams.microsoft.com") ||
-            url.Contains("microsoftonline.com") ||
-            url.Contains("microsoft.com/devicelogin"))
-            return;
-
-        // Open in Firefox directly to avoid external-launch safety warnings
         var firefox = FindFirefox();
         Process.Start(new ProcessStartInfo(firefox, url) { UseShellExecute = false });
 
-        // Close the Edge window
         if (IsWindow(hwnd))
             PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
     }
@@ -307,8 +322,6 @@ class RedirectService
         catch { }
         return null;
     }
-
-    // P/Invoke
 
     private delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd,
         int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
