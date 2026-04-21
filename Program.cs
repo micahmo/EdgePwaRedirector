@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
@@ -28,11 +29,35 @@ static class Program
             StartupLog.GetUserObjectInformation(StartupLog.GetProcessWindowStation(), 2, wsSb, 256, out wsLen);
             var deskSb = new StringBuilder(256); int deskLen;
             StartupLog.GetUserObjectInformation(StartupLog.GetThreadDesktop(StartupLog.GetCurrentThreadId()), 2, deskSb, 256, out deskLen);
-            try { var parent = Process.GetProcessById((int)StartupLog.GetParentProcessId(self.Handle)); Log($"Parent={parent.ProcessName}({parent.Id})"); } catch { Log("Parent=unknown"); }
+            bool launchedFromExplorer = false;
+            try
+            {
+                var parent = Process.GetProcessById((int)StartupLog.GetParentProcessId(self.Handle));
+                Log($"Parent={parent.ProcessName}({parent.Id})");
+                launchedFromExplorer = parent.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase);
+            }
+            catch { Log("Parent=unknown"); }
+
             uint uiRestrict = 0;
             bool uiOk = StartupLog.QueryInformationJobObject(IntPtr.Zero, 4, ref uiRestrict, 4, out _);
             bool isElevated = new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
             Log($"InJob={inJob} IsElevated={isElevated} WindowStation={wsSb} Desktop={deskSb} JobUIRestrictions={(uiOk ? $"0x{uiRestrict:X}" : $"err={Marshal.GetLastWin32Error()}")}");
+
+            // If not launched through Explorer's shell chain, the notification area silently
+            // rejects Shell_NotifyIcon on this machine. Relaunch via ShellExecute (which goes
+            // through Explorer) and exit — the new instance will show the tray icon correctly.
+            bool isRelaunch = Environment.GetCommandLineArgs().Skip(1).Contains("--relaunch");
+            if (!launchedFromExplorer && !isRelaunch)
+            {
+                Log("Not launched from Explorer; relaunching via ShellExecute");
+                Process.Start(new ProcessStartInfo(self.MainModule!.FileName)
+                {
+                    Arguments = "--relaunch",
+                    UseShellExecute = true
+                });
+                return; // The relaunched instance handles old-instance killing
+            }
+
             bool killedAny = false;
             foreach (var other in Process.GetProcessesByName(self.ProcessName))
             {
@@ -42,7 +67,6 @@ static class Program
                     try { other.Kill(); other.WaitForExit(3000); killedAny = true; } catch { }
                 }
             }
-            // Give the shell time to remove the old tray icon before we register a new one.
             if (killedAny) Thread.Sleep(1000);
 
             Log("Starting TrayApp");
