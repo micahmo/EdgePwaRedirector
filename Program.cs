@@ -432,12 +432,17 @@ class RedirectService
         Log($"hwnd={hwnd} pid={closePid} parent={GetParent(hwnd)} navigating to blank");
         NavigateToBlank(hwnd, out bool navOk);
         Log($"hwnd={hwnd} navOk={navOk} isWindow={IsWindow(hwnd)}");
-        Thread.Sleep(300);
+        Thread.Sleep(500);
 
         bool stillThere = IsWindow(hwnd);
-        Log($"hwnd={hwnd} stillThere={stillThere} sending WM_CLOSE");
+        Log($"hwnd={hwnd} stillThere={stillThere} closing tab");
         if (stillThere)
-            PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        {
+            bool tabClosed = CloseTabViaUia(hwnd);
+            Log($"hwnd={hwnd} tabClosed={tabClosed}");
+            if (!tabClosed)
+                PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        }
         Thread.Sleep(500);
         Log($"hwnd={hwnd} afterClose isWindow={IsWindow(hwnd)}");
     }
@@ -465,6 +470,29 @@ class RedirectService
             }
         }
         catch (Exception ex) { Log($"NavigateToBlank ex: {ex.GetType().Name}: {ex.Message}"); }
+    }
+
+    private static bool CloseTabViaUia(IntPtr hwnd)
+    {
+        try
+        {
+            var root = AutomationElement.FromHandle(hwnd);
+            // Chrome/Edge tab close button — name varies by version/locale, try both
+            foreach (var name in new[] { "Close tab", "Close Tab" })
+            {
+                var btn = root.FindFirst(TreeScope.Descendants, new AndCondition(
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
+                    new PropertyCondition(AutomationElement.NameProperty, name)
+                ));
+                if (btn?.GetCurrentPattern(InvokePattern.Pattern) is InvokePattern ip)
+                {
+                    ip.Invoke();
+                    return true;
+                }
+            }
+        }
+        catch (Exception ex) { Log($"CloseTabViaUia ex: {ex.GetType().Name}: {ex.Message}"); }
+        return false;
     }
 
     private static string FindFirefox()
