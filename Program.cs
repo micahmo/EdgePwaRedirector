@@ -314,16 +314,34 @@ class RedirectService
         return sb.ToString() == "Chrome_WidgetWin_1";
     }
 
-    private static bool IsSpawnedByKnownPwa(IntPtr hwnd)
+    private bool IsSpawnedByKnownPwa(IntPtr hwnd)
     {
+        // Primary: owner window belongs to a known PWA (installed PWA popup)
         var owner = GetWindow(hwnd, GW_OWNER);
-        var ownerTitle = new StringBuilder(512); GetWindowText(owner, ownerTitle, 512);
-        var hwndTitle = new StringBuilder(512); GetWindowText(hwnd, hwndTitle, 512);
-        bool ownerMatch = owner != IntPtr.Zero && IsKnownPwaWindow(owner);
-        bool selfIsPwa = IsKnownPwaWindow(hwnd);
-        bool pwaRunning = !selfIsPwa && IsKnownPwaProcessRunning();
-        Log($"IsSpawnedByKnownPwa hwnd={hwnd} title='{hwndTitle}' owner={owner} ownerTitle='{ownerTitle}' ownerMatch={ownerMatch} selfIsPwa={selfIsPwa} pwaRunning={pwaRunning} result={ownerMatch || pwaRunning}");
-        return ownerMatch || pwaRunning;
+        if (owner != IntPtr.Zero && IsKnownPwaWindow(owner))
+            return true;
+
+        if (IsKnownPwaWindow(hwnd)) return false; // Don't redirect the PWA window itself
+
+        // Secondary: known PWA installed with --app-id= is running
+        if (IsKnownPwaProcessRunning()) return true;
+
+        // Tertiary: Outlook/Teams may run as a regular browser tab (no --app-id=).
+        // In that case, links open new windows in the same Edge process. Check if
+        // any known-PWA-titled window shares this process.
+        GetWindowThreadProcessId(hwnd, out uint newPid);
+        lock (_lock)
+        {
+            foreach (var known in _knownWindows)
+            {
+                if (known == hwnd) continue;
+                GetWindowThreadProcessId(known, out uint knownPid);
+                if (knownPid == newPid && IsKnownPwaWindow(known))
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsKnownPwaWindow(IntPtr hwnd)
@@ -486,6 +504,7 @@ class RedirectService
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hWnd, int uCmd);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MSG
