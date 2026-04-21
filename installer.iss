@@ -43,21 +43,20 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 [Code]
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  ResultCode, I, F: Integer;
+  ResultCode, I: Integer;
   ExePath: String;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
   // Single-file .NET apps memory-map the exe; handles release asynchronously after
-  // TerminateProcess. Poll until we can open the file for writing (up to 10s).
+  // TerminateProcess. Poll until we can rename the file (proves it's unlocked).
   ExePath := ExpandConstant('{app}\{#MyAppExeName}');
   for I := 1 to 50 do
   begin
     Sleep(200);
-    F := FileOpen(ExePath, fmOpenReadWrite);
-    if F >= 0 then
+    if RenameFile(ExePath, ExePath + '.old') then
     begin
-      FileClose(F);
+      RenameFile(ExePath + '.old', ExePath);
       break;
     end;
   end;
