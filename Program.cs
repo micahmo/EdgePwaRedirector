@@ -22,6 +22,14 @@ static class Program
 
             var self = Process.GetCurrentProcess();
             Log($"Start pid={self.Id} user={Environment.UserName} interactive={Environment.UserInteractive} session={self.SessionId}");
+
+            StartupLog.IsProcessInJob(self.Handle, IntPtr.Zero, out bool inJob);
+            var wsSb = new StringBuilder(256); int wsLen;
+            StartupLog.GetUserObjectInformation(StartupLog.GetProcessWindowStation(), 2, wsSb, 256, out wsLen);
+            var deskSb = new StringBuilder(256); int deskLen;
+            StartupLog.GetUserObjectInformation(StartupLog.GetThreadDesktop(StartupLog.GetCurrentThreadId()), 2, deskSb, 256, out deskLen);
+            try { var parent = Process.GetProcessById((int)StartupLog.GetParentProcessId(self.Handle)); Log($"Parent={parent.ProcessName}({parent.Id})"); } catch { Log("Parent=unknown"); }
+            Log($"InJob={inJob} WindowStation={wsSb} Desktop={deskSb}");
             bool killedAny = false;
             foreach (var other in Process.GetProcessesByName(self.ProcessName))
             {
@@ -56,6 +64,15 @@ static class StartupLog
         if (Path != null)
             System.IO.File.AppendAllText(Path, $"[{DateTime.Now:O}] {msg}\n");
     }
+
+    [DllImport("kernel32.dll")] internal static extern bool IsProcessInJob(IntPtr hProcess, IntPtr hJob, out bool result);
+    [DllImport("user32.dll")] internal static extern IntPtr GetProcessWindowStation();
+    [DllImport("user32.dll")] internal static extern IntPtr GetThreadDesktop(uint dwThreadId);
+    [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] internal static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+    [DllImport("ntdll.dll")] internal static extern int NtQueryInformationProcess(IntPtr hProcess, int processInformationClass, ref PROCESS_BASIC_INFORMATION pbi, int size, out int returnLength);
+    internal static uint GetParentProcessId(IntPtr hProcess) { var pbi = new PROCESS_BASIC_INFORMATION(); NtQueryInformationProcess(hProcess, 0, ref pbi, Marshal.SizeOf(pbi), out _); return (uint)pbi.InheritedFromUniqueProcessId; }
+    [StructLayout(LayoutKind.Sequential)] internal struct PROCESS_BASIC_INFORMATION { public IntPtr Reserved1; public IntPtr PebBaseAddress; public IntPtr Reserved2_0; public IntPtr Reserved2_1; public IntPtr UniqueProcessId; public IntPtr InheritedFromUniqueProcessId; }
 }
 
 class TrayApp : ApplicationContext
