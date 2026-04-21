@@ -455,14 +455,13 @@ class RedirectService
             var bar = root.FindFirst(TreeScope.Descendants, condition);
             if (bar?.GetCurrentPattern(ValuePattern.Pattern) is ValuePattern vp)
             {
+                bar.SetFocus();
                 vp.SetValue("about:blank");
-                var barHwnd = new IntPtr(bar.Current.NativeWindowHandle);
-                if (barHwnd != IntPtr.Zero)
-                {
-                    PostMessage(barHwnd, WM_KEYDOWN, (IntPtr)0x0D, IntPtr.Zero);
-                    PostMessage(barHwnd, WM_KEYUP, (IntPtr)0x0D, IntPtr.Zero);
-                    ok = true;
-                }
+                // NativeWindowHandle is 0 for Chrome address bar (no real Win32 HWND).
+                // Send Enter to the top-level window instead — it dispatches to focused control.
+                PostMessage(hwnd, WM_KEYDOWN, (IntPtr)0x0D, IntPtr.Zero);
+                PostMessage(hwnd, WM_KEYUP, (IntPtr)0x0D, IntPtr.Zero);
+                ok = true;
             }
         }
         catch (Exception ex) { Log($"NavigateToBlank ex: {ex.GetType().Name}: {ex.Message}"); }
