@@ -17,6 +17,16 @@ static class Program
     {
         try
         {
+            // Kill any previous instance — same user always has permission,
+            // and this lets the installer hand off cleanly without needing to
+            // kill the process itself from an elevated/different-user context.
+            var self = Process.GetCurrentProcess();
+            foreach (var other in Process.GetProcessesByName(self.ProcessName))
+            {
+                if (other.Id != self.Id)
+                    try { other.Kill(); other.WaitForExit(3000); } catch { }
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new TrayApp());

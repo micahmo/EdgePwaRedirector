@@ -30,6 +30,9 @@ Name: "startup"; Description: "Start automatically when Windows starts"; GroupDe
 Source: "publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "app.ico"; DestDir: "{app}"; Flags: ignoreversion
 
+[InstallDelete]
+Type: files; Name: "{app}\{#MyAppExeName}.bak"
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: ""
@@ -43,33 +46,13 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 [Code]
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  ResultCode, I: Integer;
-  ExePath, Log: String;
+  ExePath: String;
 begin
-  // PowerShell Stop-Process handles cross-session kills better than taskkill
-  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-       '-NonInteractive -WindowStyle Hidden -Command ' +
-       '"Stop-Process -Name ''EdgePwaRedirector'' -Force -ErrorAction SilentlyContinue"',
-       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Log := 'Stop-Process exit code: ' + IntToStr(ResultCode) + #13#10;
-
+  // Rename the old exe out of the way so Inno creates a fresh file rather than
+  // overwriting. RenameFile works even on running exes (FILE_SHARE_DELETE), so
+  // no process kill is needed here. The new instance kills the old one on startup.
   ExePath := ExpandConstant('{app}\{#MyAppExeName}');
-
-  // RenameFile succeeds even on running exes (FILE_SHARE_DELETE) so it's not a
-  // reliable write-lock probe. Instead try overwriting with a dummy copy.
-  for I := 1 to 50 do
-  begin
-    Sleep(200);
-    if FileCopy(ExePath, ExePath + '.probe', False) then
-    begin
-      DeleteFile(ExePath + '.probe');
-      Log := Log + 'file writable after ' + IntToStr(I) + ' attempt(s)' + #13#10;
-      break;
-    end;
-    if I = 50 then
-      Log := Log + 'file still locked after 50 attempts' + #13#10;
-  end;
-
-  SaveStringToFile(ExpandConstant('{app}\install_diag.txt'), Log, False);
+  DeleteFile(ExePath + '.bak');
+  RenameFile(ExePath, ExePath + '.bak');
   Result := '';
 end;
