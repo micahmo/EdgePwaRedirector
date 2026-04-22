@@ -13,6 +13,10 @@ namespace EdgePwaRedirector;
 
 static class Program
 {
+    internal static readonly string LogDir = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "EdgePwaRedirector");
+
     static void RunHidden(string exe, string args) =>
         Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = false, CreateNoWindow = true })
                ?.WaitForExit(10000);
@@ -64,8 +68,12 @@ static class Program
         }
         catch (Exception ex)
         {
-            var log = System.IO.Path.Combine(AppContext.BaseDirectory, "crash.log");
-            System.IO.File.WriteAllText(log, ex.ToString());
+            try
+            {
+                System.IO.Directory.CreateDirectory(LogDir);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(LogDir, "crash.log"), ex.ToString());
+            }
+            catch { }
             MessageBox.Show(ex.ToString(), "EdgePwaRedirector crashed");
         }
     }
@@ -113,6 +121,11 @@ class TrayApp : ApplicationContext
 
     private static Icon CreateTrayIcon()
     {
+        var icoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "app.ico");
+        if (System.IO.File.Exists(icoPath))
+            return new Icon(icoPath);
+
+        // Fallback: generate a simple arrow icon programmatically.
         var bmp = new Bitmap(32, 32);
         using (var g = Graphics.FromImage(bmp))
         {
@@ -123,29 +136,7 @@ class TrayApp : ApplicationContext
             g.DrawLine(pen, 16, 8, 26, 16);
             g.DrawLine(pen, 16, 24, 26, 16);
         }
-
-        using var pngMs = new System.IO.MemoryStream();
-        bmp.Save(pngMs, System.Drawing.Imaging.ImageFormat.Png);
-        bmp.Dispose();
-        var png = pngMs.ToArray();
-
-        using var icoMs = new System.IO.MemoryStream();
-        using var w = new System.IO.BinaryWriter(icoMs);
-        w.Write((short)0);
-        w.Write((short)1);
-        w.Write((short)1);
-        w.Write((byte)32);
-        w.Write((byte)32);
-        w.Write((byte)0);
-        w.Write((byte)0);
-        w.Write((short)1);
-        w.Write((short)32);
-        w.Write(png.Length);
-        w.Write(6 + 16);
-        w.Write(png);
-
-        icoMs.Position = 0;
-        return new Icon(icoMs);
+        return Icon.FromHandle(bmp.GetHicon());
     }
 
     private ContextMenuStrip BuildContextMenu()
@@ -393,10 +384,17 @@ class RedirectService
         return false;
     }
 
-    private static void Log(string msg) =>
-        System.IO.File.AppendAllText(
-            System.IO.Path.Combine(AppContext.BaseDirectory, "redirect.log"),
-            $"[{DateTime.Now:O}] {msg}\n");
+    private static void Log(string msg)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(Program.LogDir);
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(Program.LogDir, "redirect.log"),
+                $"[{DateTime.Now:O}] {msg}\n");
+        }
+        catch { }
+    }
 
     private static void RedirectToDefaultBrowser(IntPtr hwnd)
     {
