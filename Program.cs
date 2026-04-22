@@ -405,9 +405,8 @@ class RedirectService
         for (int i = 0; i < 20; i++)
         {
             Thread.Sleep(300);
-            if (!IsWindow(hwnd)) { Log($"hwnd={hwnd} gone at poll[{i}]"); return; }
+            if (!IsWindow(hwnd)) return;
             var candidate = ReadAddressBarUrl(hwnd);
-            Log($"hwnd={hwnd} poll[{i}] url='{candidate}'");
             if (!string.IsNullOrEmpty(candidate) && !IsTransientUrl(candidate))
             {
                 url = candidate;
@@ -415,41 +414,32 @@ class RedirectService
             }
         }
 
-        if (!IsWindow(hwnd)) { Log($"hwnd={hwnd} gone after poll"); return; }
+        if (!IsWindow(hwnd)) return;
 
-        Log($"hwnd={hwnd} final url='{url}' isAuth={url != null && IsAuthUrl(url)} isOwned={url != null && IsOwnedUrl(url)}");
-
-        if (url != null && IsAuthUrl(url)) { Log("returning: auth url"); return; }
+        if (url != null && IsAuthUrl(url)) return;
 
         if (!string.IsNullOrEmpty(url) && !IsOwnedUrl(url))
         {
-            var firefox = FindFirefox();
-            Log($"opening in firefox: {url}");
-            Process.Start(new ProcessStartInfo(firefox, url) { UseShellExecute = false });
+            Log($"redirect url='{url}'");
+            Process.Start(new ProcessStartInfo(FindFirefox(), url) { UseShellExecute = false });
         }
 
-        GetWindowThreadProcessId(hwnd, out uint closePid);
-        Log($"hwnd={hwnd} pid={closePid} parent={GetParent(hwnd)} navigating to blank");
-        NavigateToBlank(hwnd, out bool navOk);
-        Log($"hwnd={hwnd} navOk={navOk} isWindow={IsWindow(hwnd)}");
+        NavigateToBlank(hwnd);
         Thread.Sleep(500);
 
-        bool stillThere = IsWindow(hwnd);
-        Log($"hwnd={hwnd} stillThere={stillThere} closing tab");
-        if (stillThere)
+        if (IsWindow(hwnd))
         {
-            bool tabClosed = CloseTabViaUia(hwnd);
-            Log($"hwnd={hwnd} tabClosed={tabClosed}");
-            if (!tabClosed)
+            bool closed = CloseTabViaUia(hwnd);
+            if (!closed)
+            {
+                Log("CloseTabViaUia failed, falling back to WM_CLOSE");
                 PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            }
         }
-        Thread.Sleep(500);
-        Log($"hwnd={hwnd} afterClose isWindow={IsWindow(hwnd)}");
     }
 
-    private static void NavigateToBlank(IntPtr hwnd, out bool ok)
+    private static void NavigateToBlank(IntPtr hwnd)
     {
-        ok = false;
         try
         {
             var root = AutomationElement.FromHandle(hwnd);
@@ -466,10 +456,9 @@ class RedirectService
                 // Send Enter to the top-level window instead — it dispatches to focused control.
                 PostMessage(hwnd, WM_KEYDOWN, (IntPtr)0x0D, IntPtr.Zero);
                 PostMessage(hwnd, WM_KEYUP, (IntPtr)0x0D, IntPtr.Zero);
-                ok = true;
             }
         }
-        catch (Exception ex) { Log($"NavigateToBlank ex: {ex.GetType().Name}: {ex.Message}"); }
+        catch { }
     }
 
     private static bool CloseTabViaUia(IntPtr hwnd)
@@ -491,7 +480,7 @@ class RedirectService
                 }
             }
         }
-        catch (Exception ex) { Log($"CloseTabViaUia ex: {ex.GetType().Name}: {ex.Message}"); }
+        catch { }
         return false;
     }
 
@@ -541,7 +530,6 @@ class RedirectService
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-    [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hWnd);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MSG
