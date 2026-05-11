@@ -652,16 +652,35 @@ class RedirectService
             Process.Start(new ProcessStartInfo(FindFirefox(), url) { UseShellExecute = false });
         }
 
-        NavigateToBlank(hwnd);
-        Thread.Sleep(250);
-
-        if (IsWindow(hwnd))
+        // Popup windows (GW_OWNER set) are new single-tab windows — our fast URL detection
+        // runs within ~100ms of open, before any JavaScript has had time to register a
+        // beforeunload handler, so WM_CLOSE is clean and near-instant. If it somehow
+        // doesn't close (rare: page loaded very fast and has beforeunload), fall back to
+        // NavigateToBlank. Regular windows (existing Edge session, tertiary detection)
+        // need NavigateToBlank first to safely clear any beforeunload handlers.
+        if (GetWindow(hwnd, GW_OWNER) != IntPtr.Zero)
         {
-            bool closed = CloseTabViaUia(hwnd);
-            if (!closed)
+            PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            for (int i = 0; i < 6 && IsWindow(hwnd); i++) Thread.Sleep(50);
+            if (IsWindow(hwnd))
             {
-                Log("CloseTabViaUia failed, falling back to WM_CLOSE");
-                PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                NavigateToBlank(hwnd);
+                Thread.Sleep(200);
+                if (IsWindow(hwnd)) PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            }
+        }
+        else
+        {
+            NavigateToBlank(hwnd);
+            Thread.Sleep(200);
+            if (IsWindow(hwnd))
+            {
+                bool closed = CloseTabViaUia(hwnd);
+                if (!closed)
+                {
+                    Log("CloseTabViaUia failed, falling back to WM_CLOSE");
+                    PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                }
             }
         }
     }
