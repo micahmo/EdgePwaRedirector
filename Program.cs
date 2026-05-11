@@ -102,6 +102,8 @@ class TrayApp : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly RedirectService _service;
     private readonly TrayMessageWindow _messageWindow;
+    private ToolStripMenuItem _pauseItem = null!;
+    private ToolStripMenuItem _statusItem = null!;
 
     public TrayApp()
     {
@@ -144,8 +146,21 @@ class TrayApp : ApplicationContext
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         var versionLabel = new ToolStripMenuItem($"v{version?.ToString(3) ?? "?"}") { Enabled = false };
 
+        _pauseItem = new ToolStripMenuItem("Pause Redirection") { CheckOnClick = true };
+        _pauseItem.CheckedChanged += (_, _) =>
+        {
+            _service.Paused = _pauseItem.Checked;
+            _trayIcon.Text = _pauseItem.Checked ? "Edge PWA Redirector (Paused)" : "Edge PWA Redirector";
+        };
+
+        _statusItem = new ToolStripMenuItem("No redirects yet") { Enabled = false };
+
         var menu = new ContextMenuStrip();
         menu.Items.Add(versionLabel);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_pauseItem);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) =>
         {
@@ -153,7 +168,30 @@ class TrayApp : ApplicationContext
             _trayIcon.Visible = false;
             Application.Exit();
         });
+
+        menu.Opening += (_, _) => UpdateStatus();
         return menu;
+    }
+
+    private void UpdateStatus()
+    {
+        var (url, time) = _service.GetLastRedirect();
+        if (url == null)
+        {
+            _statusItem.Text = "No redirects yet";
+            return;
+        }
+
+        string host;
+        try { host = new Uri(url).Host; }
+        catch { host = url.Length > 50 ? url[..47] + "..." : url; }
+
+        var ago = DateTime.Now - time;
+        string timeStr = ago.TotalSeconds < 60 ? "just now"
+            : ago.TotalMinutes < 60 ? $"{(int)ago.TotalMinutes}m ago"
+            : time.ToString("h:mm tt");
+
+        _statusItem.Text = $"{host}  ·  {timeStr}";
     }
 
     protected override void Dispose(bool disposing)
@@ -200,6 +238,16 @@ class RedirectService
     private WinEventDelegate? _delegate;
     private readonly HashSet<IntPtr> _knownWindows = new();
     private readonly object _lock = new();
+    private volatile bool _paused;
+    private string? _lastUrl;
+    private DateTime _lastTime;
+
+    public bool Paused { get => _paused; set => _paused = value; }
+
+    public (string? Url, DateTime Time) GetLastRedirect()
+    {
+        lock (_lock) return (_lastUrl, _lastTime);
+    }
 
     private const uint EVENT_OBJECT_SHOW = 0x8002;
     private const uint EVENT_OBJECT_DESTROY = 0x8001;
@@ -294,6 +342,8 @@ class RedirectService
         if (!isNew) return;
 
         if (!IsSpawnedByKnownPwa(hwnd)) return;
+
+        if (_paused) return;
 
         ThreadPool.QueueUserWorkItem(_ => RedirectToDefaultBrowser(hwnd));
     }
@@ -396,13 +446,19 @@ class RedirectService
         catch { }
     }
 
-    private static void RedirectToDefaultBrowser(IntPtr hwnd)
+    private void RedirectToDefaultBrowser(IntPtr hwnd)
     {
+        if (_paused) return;
+
         string? url = null;
 
+        // Poll for the URL with short initial intervals, backing off to 300ms.
+        // Trying at 0ms first means common-case redirects are near-instant rather
+        // than always waiting a fixed 300ms before the first read attempt.
         for (int i = 0; i < 20; i++)
         {
-            Thread.Sleep(300);
+            int sleepMs = i == 0 ? 0 : i < 6 ? 100 : i < 11 ? 200 : 300;
+            if (sleepMs > 0) Thread.Sleep(sleepMs);
             if (!IsWindow(hwnd)) return;
             var candidate = ReadAddressBarUrl(hwnd);
             if (!string.IsNullOrEmpty(candidate) && !IsTransientUrl(candidate))
@@ -419,11 +475,12 @@ class RedirectService
         if (!string.IsNullOrEmpty(url) && !IsOwnedUrl(url))
         {
             Log($"redirect url='{url}'");
+            lock (_lock) { _lastUrl = url; _lastTime = DateTime.Now; }
             Process.Start(new ProcessStartInfo(FindFirefox(), url) { UseShellExecute = false });
         }
 
         NavigateToBlank(hwnd);
-        Thread.Sleep(500);
+        Thread.Sleep(250);
 
         if (IsWindow(hwnd))
         {
