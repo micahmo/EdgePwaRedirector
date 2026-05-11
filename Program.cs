@@ -194,11 +194,10 @@ class TrayApp : ApplicationContext
         var (state, version, _) = _updateChecker.GetState();
         (_updateItem.Text, _updateItem.Enabled) = state switch
         {
-            UpdateChecker.UpdateState.Checking    => ("Checking for updates...", false),
-            UpdateChecker.UpdateState.UpToDate    => ("Up to date", false),
+            UpdateChecker.UpdateState.Checking        => ("Checking for updates...", false),
             UpdateChecker.UpdateState.UpdateAvailable => ($"Update to v{version?.ToString(3)}", true),
-            UpdateChecker.UpdateState.Downloading => ("Downloading...", false),
-            _                                     => ("Check for updates", true),
+            UpdateChecker.UpdateState.Downloading     => ("Downloading...", false),
+            _                                         => ("Check for updates", true),
         };
     }
 
@@ -210,9 +209,9 @@ class TrayApp : ApplicationContext
             _updateItem.Enabled = false;
             _updateItem.Text = "Downloading...";
             bool ok = await _updateChecker.DownloadAndInstall();
-            if (!ok) RefreshUpdateItem(); // revert if download failed
+            if (!ok) RefreshUpdateItem();
         }
-        else if (state is UpdateChecker.UpdateState.Idle or UpdateChecker.UpdateState.UpToDate)
+        else if (state != UpdateChecker.UpdateState.Checking && state != UpdateChecker.UpdateState.Downloading)
         {
             _updateChecker.ForceCheck();
             RefreshUpdateItem();
@@ -485,6 +484,7 @@ class RedirectService
         _hook = SetWinEventHook(
             EVENT_OBJECT_DESTROY, EVENT_OBJECT_SHOW,
             IntPtr.Zero, _delegate, 0, 0, WINEVENT_OUTOFCONTEXT);
+        Log(_hook != IntPtr.Zero ? "hook-ok" : "hook-FAILED");
 
         var msg = new MSG();
         while (GetMessage(ref msg, IntPtr.Zero, 0, 0) > 0)
@@ -510,7 +510,9 @@ class RedirectService
         lock (_lock) isNew = _knownWindows.Add(hwnd);
         if (!isNew) return;
 
-        if (!IsSpawnedByKnownPwa(hwnd)) return;
+        bool spawned = IsSpawnedByKnownPwa(hwnd);
+        Log($"new-edge hwnd={hwnd} spawned={spawned} paused={_paused}");
+        if (!spawned) return;
 
         if (_paused) return;
 
@@ -618,6 +620,7 @@ class RedirectService
     private void RedirectToDefaultBrowser(IntPtr hwnd)
     {
         if (_paused) return;
+        Log($"redirect-start hwnd={hwnd}");
 
         string? url = null;
 
@@ -639,6 +642,7 @@ class RedirectService
 
         if (!IsWindow(hwnd)) return;
 
+        Log($"redirect-url='{url ?? "null"}'");
         if (url != null && IsAuthUrl(url)) return;
 
         if (!string.IsNullOrEmpty(url) && !IsOwnedUrl(url))
