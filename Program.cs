@@ -423,6 +423,7 @@ class RedirectService
     private const int GW_OWNER = 4;
     private const int OBJID_WINDOW = 0;
     private const uint WM_CLOSE = 0x0010;
+    private const int SW_HIDE = 0;
     private const uint WM_KEYDOWN = 0x0100;
     private const uint WM_KEYUP = 0x0101;
 
@@ -665,29 +666,23 @@ class RedirectService
         {
             Log($"redirect url='{url}'");
             lock (_lock) { _lastUrl = url; _lastTime = DateTime.Now; }
-            Process.Start(new ProcessStartInfo(FindFirefox(), url) { UseShellExecute = false });
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         }
 
-        // All detected windows are newly created single-tab windows, so WM_CLOSE is safe
-        // and near-instant regardless of whether they have GW_OWNER set. Poll briefly to
-        // confirm the close; if still alive after 300ms (rare: beforeunload dialog), fall
-        // back to NavigateToBlank to clear any handlers and retry.
-        PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-        for (int i = 0; i < 6; i++)
-        {
-            Thread.Sleep(50);
-            if (!IsWindow(hwnd)) return;
-        }
+        // Hide the window immediately so the user stops seeing Edge as soon as Firefox
+        // opens. The actual NavigateToBlank + close happens invisibly in the background.
+        ShowWindow(hwnd, SW_HIDE);
+
+        NavigateToBlank(hwnd);
+        Thread.Sleep(200);
+
         if (IsWindow(hwnd))
         {
-            Log("WM_CLOSE did not close window, using NavigateToBlank fallback");
-            NavigateToBlank(hwnd);
-            Thread.Sleep(200);
-            if (IsWindow(hwnd))
+            bool closed = CloseTabViaUia(hwnd);
+            if (!closed)
             {
-                bool closed = CloseTabViaUia(hwnd);
-                if (!closed)
-                    PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                Log("CloseTabViaUia failed, falling back to WM_CLOSE");
+                PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             }
         }
     }
@@ -738,16 +733,6 @@ class RedirectService
         return false;
     }
 
-    private static string FindFirefox()
-    {
-        string[] candidates = [
-            @"C:\Program Files\Mozilla Firefox\firefox.exe",
-            @"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
-        ];
-        foreach (var path in candidates)
-            if (System.IO.File.Exists(path)) return path;
-        return "firefox";
-    }
 
     private static string? ReadAddressBarUrl(IntPtr hwnd)
     {
@@ -782,6 +767,7 @@ class RedirectService
     [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hWnd, int uCmd);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
