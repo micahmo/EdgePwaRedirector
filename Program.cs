@@ -625,19 +625,35 @@ class RedirectService
         string? url = null;
 
         // Poll for the URL with short initial intervals, backing off to 300ms.
-        // Trying at 0ms first means common-case redirects are near-instant rather
-        // than always waiting a fixed 300ms before the first read attempt.
+        // Cache the address bar AutomationElement after the first tree walk so
+        // subsequent iterations only read the value rather than re-walking the tree.
+        AutomationElement? addrBar = null;
+        ValuePattern? addrPattern = null;
+
         for (int i = 0; i < 20; i++)
         {
             int sleepMs = i == 0 ? 0 : i < 6 ? 100 : i < 11 ? 200 : 300;
             if (sleepMs > 0) Thread.Sleep(sleepMs);
             if (!IsWindow(hwnd)) return;
-            var candidate = ReadAddressBarUrl(hwnd);
-            if (!string.IsNullOrEmpty(candidate) && !IsTransientUrl(candidate))
+            try
             {
-                url = candidate;
-                break;
+                if (addrBar == null)
+                {
+                    var root = AutomationElement.FromHandle(hwnd);
+                    var cond = new AndCondition(
+                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
+                        new PropertyCondition(AutomationElement.NameProperty, "Address and search bar"));
+                    addrBar = root.FindFirst(TreeScope.Descendants, cond);
+                    addrPattern = addrBar?.GetCurrentPattern(ValuePattern.Pattern) as ValuePattern;
+                }
+                var candidate = addrPattern?.Current.Value;
+                if (!string.IsNullOrEmpty(candidate) && !IsTransientUrl(candidate))
+                {
+                    url = candidate;
+                    break;
+                }
             }
+            catch { addrBar = null; addrPattern = null; }
         }
 
         if (!IsWindow(hwnd)) return;
@@ -652,35 +668,26 @@ class RedirectService
             Process.Start(new ProcessStartInfo(FindFirefox(), url) { UseShellExecute = false });
         }
 
-        // Popup windows (GW_OWNER set) are new single-tab windows — our fast URL detection
-        // runs within ~100ms of open, before any JavaScript has had time to register a
-        // beforeunload handler, so WM_CLOSE is clean and near-instant. If it somehow
-        // doesn't close (rare: page loaded very fast and has beforeunload), fall back to
-        // NavigateToBlank. Regular windows (existing Edge session, tertiary detection)
-        // need NavigateToBlank first to safely clear any beforeunload handlers.
-        if (GetWindow(hwnd, GW_OWNER) != IntPtr.Zero)
+        // All detected windows are newly created single-tab windows, so WM_CLOSE is safe
+        // and near-instant regardless of whether they have GW_OWNER set. Poll briefly to
+        // confirm the close; if still alive after 300ms (rare: beforeunload dialog), fall
+        // back to NavigateToBlank to clear any handlers and retry.
+        PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        for (int i = 0; i < 6; i++)
         {
-            PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-            for (int i = 0; i < 6 && IsWindow(hwnd); i++) Thread.Sleep(50);
-            if (IsWindow(hwnd))
-            {
-                NavigateToBlank(hwnd);
-                Thread.Sleep(200);
-                if (IsWindow(hwnd)) PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-            }
+            Thread.Sleep(50);
+            if (!IsWindow(hwnd)) return;
         }
-        else
+        if (IsWindow(hwnd))
         {
+            Log("WM_CLOSE did not close window, using NavigateToBlank fallback");
             NavigateToBlank(hwnd);
             Thread.Sleep(200);
             if (IsWindow(hwnd))
             {
                 bool closed = CloseTabViaUia(hwnd);
                 if (!closed)
-                {
-                    Log("CloseTabViaUia failed, falling back to WM_CLOSE");
                     PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                }
             }
         }
     }
