@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics;
 using System.Drawing;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Automation;
 using System.Windows.Forms;
 
@@ -102,6 +105,9 @@ class TrayApp : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly RedirectService _service;
     private readonly TrayMessageWindow _messageWindow;
+    private readonly UpdateChecker _updateChecker = new();
+    private readonly WindowsFormsSynchronizationContext _syncCtx = new();
+    private ToolStripMenuItem _updateItem = null!;
     private ToolStripMenuItem _pauseItem = null!;
     private ToolStripMenuItem _statusItem = null!;
 
@@ -146,6 +152,9 @@ class TrayApp : ApplicationContext
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         var versionLabel = new ToolStripMenuItem($"v{version?.ToString(3) ?? "?"}") { Enabled = false };
 
+        _updateItem = new ToolStripMenuItem("Check for updates");
+        _updateItem.Click += OnUpdateItemClick;
+
         _pauseItem = new ToolStripMenuItem("Pause Redirection") { CheckOnClick = true };
         _pauseItem.CheckedChanged += (_, _) =>
         {
@@ -157,6 +166,7 @@ class TrayApp : ApplicationContext
 
         var menu = new ContextMenuStrip();
         menu.Items.Add(versionLabel);
+        menu.Items.Add(_updateItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_pauseItem);
         menu.Items.Add(new ToolStripSeparator());
@@ -169,8 +179,45 @@ class TrayApp : ApplicationContext
             Application.Exit();
         });
 
-        menu.Opening += (_, _) => UpdateStatus();
+        menu.Opening += (_, _) =>
+        {
+            UpdateStatus();
+            RefreshUpdateItem();
+            _updateChecker.CheckInBackground(() => _syncCtx.Post(_ => RefreshUpdateItem(), null));
+        };
+
         return menu;
+    }
+
+    private void RefreshUpdateItem()
+    {
+        var (state, version, _) = _updateChecker.GetState();
+        (_updateItem.Text, _updateItem.Enabled) = state switch
+        {
+            UpdateChecker.UpdateState.Checking    => ("Checking for updates...", false),
+            UpdateChecker.UpdateState.UpToDate    => ("Up to date", false),
+            UpdateChecker.UpdateState.UpdateAvailable => ($"Update to v{version?.ToString(3)}", true),
+            UpdateChecker.UpdateState.Downloading => ("Downloading...", false),
+            _                                     => ("Check for updates", true),
+        };
+    }
+
+    private async void OnUpdateItemClick(object? sender, EventArgs e)
+    {
+        var (state, _, _) = _updateChecker.GetState();
+        if (state == UpdateChecker.UpdateState.UpdateAvailable)
+        {
+            _updateItem.Enabled = false;
+            _updateItem.Text = "Downloading...";
+            bool ok = await _updateChecker.DownloadAndInstall();
+            if (!ok) RefreshUpdateItem(); // revert if download failed
+        }
+        else if (state is UpdateChecker.UpdateState.Idle or UpdateChecker.UpdateState.UpToDate)
+        {
+            _updateChecker.ForceCheck();
+            RefreshUpdateItem();
+            _updateChecker.CheckInBackground(() => _syncCtx.Post(_ => RefreshUpdateItem(), null));
+        }
     }
 
     private void UpdateStatus()
@@ -229,6 +276,128 @@ class TrayMessageWindow : NativeWindow
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern uint RegisterWindowMessage(string lpString);
+}
+
+class UpdateChecker
+{
+    public enum UpdateState { Idle, Checking, UpToDate, UpdateAvailable, Downloading }
+
+    private UpdateState _state = UpdateState.Idle;
+    private Version? _latestVersion;
+    private string? _downloadUrl;
+    private DateTime _lastCheck = DateTime.MinValue;
+    private readonly object _lock = new();
+
+    // Build produces versions like 1.0.N.0; GitHub tags are v1.0.N — normalize to 3 parts for comparison.
+    private static readonly Version CurrentVersion = NormalizeVersion(
+        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0));
+
+    private static Version NormalizeVersion(Version v) =>
+        new(v.Major, v.Minor, Math.Max(0, v.Build));
+
+    public (UpdateState State, Version? Version, string? DownloadUrl) GetState()
+    {
+        lock (_lock) return (_state, _latestVersion, _downloadUrl);
+    }
+
+    public void ForceCheck()
+    {
+        lock (_lock)
+        {
+            if (_state is UpdateState.Checking or UpdateState.Downloading) return;
+            _lastCheck = DateTime.MinValue;
+            if (_state == UpdateState.UpToDate) _state = UpdateState.Idle;
+        }
+    }
+
+    public void CheckInBackground(Action onComplete)
+    {
+        lock (_lock)
+        {
+            if (_state is UpdateState.Checking or UpdateState.Downloading) return;
+            if (_state == UpdateState.UpdateAvailable) { onComplete(); return; }
+            if ((DateTime.Now - _lastCheck).TotalMinutes < 5) return;
+            _state = UpdateState.Checking;
+        }
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("EdgePwaRedirector");
+                client.Timeout = TimeSpan.FromSeconds(10);
+                var json = await client.GetStringAsync(
+                    "https://api.github.com/repos/micahmo/EdgePwaRedirector/releases/latest");
+
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                var tag = root.GetProperty("tag_name").GetString() ?? "";
+                var latest = Version.Parse(tag.TrimStart('v'));
+
+                string? url = null;
+                if (root.TryGetProperty("assets", out var assets))
+                    foreach (var asset in assets.EnumerateArray())
+                    {
+                        var name = asset.GetProperty("name").GetString() ?? "";
+                        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        {
+                            url = asset.GetProperty("browser_download_url").GetString();
+                            break;
+                        }
+                    }
+
+                lock (_lock)
+                {
+                    _lastCheck = DateTime.Now;
+                    if (latest > CurrentVersion && url != null)
+                    {
+                        _state = UpdateState.UpdateAvailable;
+                        _latestVersion = latest;
+                        _downloadUrl = url;
+                    }
+                    else
+                    {
+                        _state = UpdateState.UpToDate;
+                    }
+                }
+            }
+            catch
+            {
+                lock (_lock) { _state = UpdateState.Idle; }
+            }
+
+            onComplete();
+        });
+    }
+
+    public async Task<bool> DownloadAndInstall()
+    {
+        string? url;
+        lock (_lock)
+        {
+            if (_state != UpdateState.UpdateAvailable) return false;
+            url = _downloadUrl;
+            _state = UpdateState.Downloading;
+        }
+        if (url == null) return false;
+
+        try
+        {
+            var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "EdgePwaRedirector-Update.exe");
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("EdgePwaRedirector");
+            var bytes = await client.GetByteArrayAsync(url);
+            await System.IO.File.WriteAllBytesAsync(tmp, bytes);
+            Process.Start(new ProcessStartInfo(tmp) { UseShellExecute = true });
+            return true;
+        }
+        catch
+        {
+            lock (_lock) { _state = UpdateState.UpdateAvailable; }
+            return false;
+        }
+    }
 }
 
 class RedirectService
