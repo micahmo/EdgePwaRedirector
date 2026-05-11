@@ -407,6 +407,8 @@ class RedirectService
     private readonly HashSet<IntPtr> _knownWindows = new();
     private readonly object _lock = new();
     private volatile bool _paused;
+    private volatile bool _pwaRunning;
+    private System.Threading.Timer? _pwaRefreshTimer;
     private string? _lastUrl;
     private DateTime _lastTime;
 
@@ -465,6 +467,11 @@ class RedirectService
             return true;
         }, IntPtr.Zero);
 
+        ThreadPool.QueueUserWorkItem(_ => _pwaRunning = CheckKnownPwaProcessRunning());
+        _pwaRefreshTimer = new System.Threading.Timer(
+            _ => _pwaRunning = CheckKnownPwaProcessRunning(),
+            null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+
         _hookThread = new Thread(HookThreadProc) { IsBackground = true };
         _hookThread.SetApartmentState(ApartmentState.STA);
         _hookThread.Start();
@@ -472,6 +479,8 @@ class RedirectService
 
     public void Stop()
     {
+        _pwaRefreshTimer?.Dispose();
+        _pwaRefreshTimer = null;
         if (_hook != IntPtr.Zero)
         {
             UnhookWinEvent(_hook);
@@ -536,8 +545,8 @@ class RedirectService
 
         if (IsKnownPwaWindow(hwnd)) return false; // Don't redirect the PWA window itself
 
-        // Secondary: known PWA installed with --app-id= is running
-        if (IsKnownPwaProcessRunning()) return true;
+        // Secondary: known PWA installed with --app-id= is running (cached, refreshed every 30s)
+        if (_pwaRunning) return true;
 
         // Tertiary: Outlook/Teams may run as a regular browser tab (no --app-id=).
         // In that case, links open new windows in the same Edge process. Check if
@@ -567,7 +576,7 @@ class RedirectService
         return false;
     }
 
-    private static bool IsKnownPwaProcessRunning()
+    private static bool CheckKnownPwaProcessRunning()
     {
         foreach (var p in Process.GetProcessesByName("msedge"))
         {
