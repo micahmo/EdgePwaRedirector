@@ -678,21 +678,38 @@ class RedirectService
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         }
 
-        // Hide the window immediately so the user stops seeing Edge as soon as Firefox
-        // opens. The actual NavigateToBlank + close happens invisibly in the background.
+        // Attempt UIA close first while the window is still visible — SW_HIDE can break
+        // Edge's accessibility tree in newer versions, so we try before hiding.
+        bool uiaClosed = false;
+        if (IsWindow(hwnd))
+        {
+            uiaClosed = CloseTabViaUia(hwnd);
+            Log(uiaClosed ? "CloseTabViaUia invoked" : "CloseTabViaUia found no button");
+        }
+
+        // Hide immediately so the user stops seeing Edge regardless of close outcome.
         ShowWindow(hwnd, SW_HIDE);
 
+        if (uiaClosed)
+        {
+            // Give Edge a moment to process the close; verify it actually worked.
+            Thread.Sleep(500);
+            if (!IsWindow(hwnd))
+            {
+                Log("close-ok via UIA");
+                return;
+            }
+            Log("CloseTabViaUia invoke did not close window; falling back");
+        }
+
+        // UIA close didn't work — navigate to blank then force close.
         NavigateToBlank(hwnd);
         Thread.Sleep(200);
 
         if (IsWindow(hwnd))
         {
-            bool closed = CloseTabViaUia(hwnd);
-            if (!closed)
-            {
-                Log("CloseTabViaUia failed, falling back to WM_CLOSE");
-                PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-            }
+            Log("falling back to WM_CLOSE");
+            PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
         }
     }
 
