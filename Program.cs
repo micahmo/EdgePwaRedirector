@@ -671,7 +671,11 @@ class RedirectService
         Log($"redirect-url='{url ?? "null"}'");
         if (url != null && IsAuthUrl(url)) return;
 
-        if (!string.IsNullOrEmpty(url) && !IsOwnedUrl(url))
+        // No URL found — this is likely a legitimate Teams UI window (e.g., screen share
+        // controls). Leave it open; there's nothing to redirect anyway.
+        if (string.IsNullOrEmpty(url)) return;
+
+        if (!IsOwnedUrl(url))
         {
             Log($"redirect url='{url}'");
             lock (_lock) { _lastUrl = url; _lastTime = DateTime.Now; }
